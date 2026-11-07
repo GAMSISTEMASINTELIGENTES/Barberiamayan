@@ -10,6 +10,4 @@
   supabaseUrl: 'https://ctolqmfvifcvgibtfkzc.supabase.co',
   supabaseAnonKey: 'sb_publishable_kv43SPKC0c64XLYS8AvDQA_RQi6a6Wo',
 };
-  supabaseUrl: '',
-  supabaseAnonKey: '',
-};
+ 

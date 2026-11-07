@@ -6,7 +6,6 @@
 // de acceso de la base de datos y la contraseña de cada usuario.
 //
 // Si los dejas vacíos, la app arranca en MODO DEMOSTRACIÓN con datos ficticios.
-window.BARBERIA_CONFIG = {
   window.BARBERIA_CONFIG = {
   supabaseUrl: 'https://ctolqmfvifcvgibtfkzc.supabase.co',
   supabaseAnonKey: 'sb_publishable_kv43SPKC0c64XLYS8AvDQA_RQi6a6Wo',

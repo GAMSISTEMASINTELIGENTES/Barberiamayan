@@ -191,7 +191,7 @@ function loginView(){
     </form>`;
   return `<div class="login"><div class="pole"></div><div class="login-main"><div class="login-box">
     <div class="tiny" style="text-transform:uppercase;letter-spacing:.1em;font-weight:700">Sistema de sucursales</div>
-    <h1>${S.db ? esc(negocio()) : 'Barbería'}</h1>
+    <h1>${S.db ? esc(negocio()) : 'Barbería Mayan'}</h1>
     <p class="muted" style="max-width:520px">Entra con tu usuario. Cada encargado ve solo su sucursal; el dueño ve ambas.</p>
     ${demo}
   </div></div></div>`;

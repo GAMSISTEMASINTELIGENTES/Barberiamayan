@@ -167,3 +167,16 @@ textarea{resize:vertical;min-height:70px}
 .log .when{font-size:12px;color:var(--ink3);white-space:nowrap;padding-top:2px}
 .readonly-note{background:#eee8dd;color:var(--ink2);font-size:13px;border-radius:9px;padding:8px 12px;margin-bottom:14px}
 .btn.busy{opacity:.6;pointer-events:none}
+
+/* --- Tarjeta de lealtad --- */
+.tarjeta{margin-top:14px;border:2px dashed var(--line);border-radius:var(--radius);padding:12px 16px;background:#fff}
+.tarjeta.completa{border-color:var(--ok);background:var(--ok-soft)}
+.sellos{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+.sello{width:38px;height:38px;border-radius:50%;border:2px dashed #cfc5b4;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--ink3);background:#fff}
+.sello.on{background:var(--accent);border:2px solid var(--accent);color:#fff;font-size:16px}
+.sello.regalo{border-color:var(--warn);font-size:17px;opacity:.55}
+.sello.regalo.on{background:var(--warn-soft);border:2px solid var(--warn);opacity:1}
+.gift{display:flex;align-items:center;gap:8px;margin-top:8px;padding:10px 12px;border:2px solid var(--ok);background:var(--ok-soft);border-radius:9px;cursor:pointer}
+.gift input{width:18px;height:18px}
+.gift-alert{margin-top:8px;padding:12px 14px;border:2px solid var(--ok);background:var(--ok-soft);border-radius:10px;font-size:15px;color:var(--ok);transition:opacity .15s}
+.gift-alert .tiny{color:var(--ok);margin-top:2px}

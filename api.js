@@ -10,7 +10,8 @@ const pad = n => String(n).padStart(2,'0');
 const dkey = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 const hoy = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
-const NUM = ['valor','precio','propina','comision','monto','dias_recordatorio','orden'];
+const NUM = ['valor','precio','propina','comision','monto','dias_recordatorio','orden','sellos_iniciales','sellos_usados','sellos_para_gratis','pago_corte_gratis','sellos'];
+const mapaSellos = filas => filas ? Object.fromEntries(filas.map(r=>[r.cliente_id, Number(r.sellos)||0])) : null;
 const norm = r => { if (!r) return r; for (const k of NUM) if (k in r && r[k] !== null) r[k] = Number(r[k]); if (r.hora) r.hora = String(r.hora).slice(0,5); return r; };
 
 // Ventanas de datos que se cargan al entrar (el historial completo de un cliente se pide aparte)
@@ -55,7 +56,7 @@ function supabaseApi(){
     async logout(){ await sb.auth.signOut(); },
     async cargar(){
       const T = hoy();
-      const [sucursales, config, peluqueros, servicios, clientes, cortes, mensajes, pagos, ajustes] = await Promise.all([
+      const [sucursales, config, peluqueros, servicios, clientes, cortes, mensajes, pagos, ajustes, saldos] = await Promise.all([
         fetchAll(()=>sb.from('sucursales').select('*').order('id')),
         fetchAll(()=>sb.from('config').select('*').order('sucursal_id')),
         fetchAll(()=>sb.from('peluqueros').select('*').order('nombre')),
@@ -65,8 +66,10 @@ function supabaseApi(){
         fetchAll(()=>sb.from('mensajes').select('*').gte('fecha', dkey(addDays(T,-VENTANA.mensajes))).order('id')),
         fetchAll(()=>sb.from('pagos').select('*').gte('hasta', dkey(addDays(T,-VENTANA.pagos))).order('id')),
         fetchAll(()=>sb.from('ajustes').select('*').gte('fecha', dkey(addDays(T,-VENTANA.pagos))).order('id')),
+        // Si la actualización de la tarjeta de lealtad (03_lealtad.sql) no está instalada, la app sigue funcionando sin ella
+        fetchAll(()=>sb.from('saldo_sellos').select('cliente_id,sellos').order('cliente_id')).catch(()=>null),
       ]);
-      return { sucursales, config, peluqueros, servicios, clientes, cortes, mensajes, pagos, ajustes };
+      return { sucursales, config, peluqueros, servicios, clientes, cortes, mensajes, pagos, ajustes, sellos: mapaSellos(saldos) };
     },
     async crear(tabla, fila){ return norm(ok(await sb.from(tabla).insert(fila).select().single())); },
     async editar(tabla, id, cambios, llave='id'){ return norm(ok(await sb.from(tabla).update(cambios).eq(llave, id).select().single())); },
@@ -78,7 +81,7 @@ function supabaseApi(){
 
 /* ---------------------- Modo demostración ---------------------- */
 function demoApi(){
-  const KEY = 'barberia-demo-v3';
+  const KEY = 'barberia-demo-v5';
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)+Date.now().toString(36));
   const PERFILES = [
     { id:'demo-dueno',  nombre:'Dueño',            rol:'dueno',     sucursal_id:null,     email:'dueno@demo' },
@@ -98,9 +101,19 @@ function demoApi(){
     db.bitacora.push({ id:db.bitacora.length+1, sucursal_id:(despues||antes).sucursal_id, usuario_nombre:yo.nombre, tabla, accion, antes:antes||null, despues:despues||null, creado:new Date().toISOString() });
   }
   const LOGEAR = { peluqueros:['insert','update','delete'], servicios:['insert','update','delete'], pagos:['insert','update','delete'], ajustes:['insert','update','delete'], config:['update'], cortes:['update','delete'] };
+  const saldoDe = cid => { const c = db.clientes.find(x=>x.id===cid); return (c?.sellos_iniciales||0) + db.cortes.filter(k=>k.cliente_id===cid).reduce((s,k)=>s+(k.sello?1:0)-(k.sellos_usados||0),0); };
+  // Mismo cálculo que hace el servidor (antes_de_corte)
   function comision(fila){
     const p = db.peluqueros.find(x=>x.id===fila.peluquero_id);
     if (!p || p.sucursal_id!==fila.sucursal_id) throw new Error('El peluquero no pertenece a esta sucursal');
+    const cfg = db.config.find(c=>c.sucursal_id===fila.sucursal_id);
+    if (fila.gratis){
+      if (saldoDe(fila.cliente_id) < cfg.sellos_para_gratis) throw new Error('El cliente todavía no completa su tarjeta de lealtad');
+      Object.assign(fila, {precio:0, sello:false, sellos_usados:cfg.sellos_para_gratis, comision:cfg.pago_corte_gratis, esquema:'Corte gratis'});
+      return;
+    }
+    const s = db.servicios.find(x=>x.id===fila.servicio_id);
+    fila.gratis = false; fila.sello = !!(s && s.da_sello); fila.sellos_usados = 0;
     fila.comision = p.esquema==='fijo' ? p.valor : Math.round(fila.precio*p.valor/100);
     fila.esquema  = p.esquema==='fijo' ? `$${p.valor} fijo` : `${p.valor}%`;
   }
@@ -112,7 +125,8 @@ function demoApi(){
     async cargar(){
       const f = t => copia(db[t].filter(visible));
       return { sucursales: copia(db.sucursales.filter(s=>visible({sucursal_id:s.id}))), config:f('config'), peluqueros:f('peluqueros'), servicios:f('servicios'),
-               clientes:f('clientes'), cortes:f('cortes'), mensajes:f('mensajes'), pagos:f('pagos'), ajustes:f('ajustes') };
+               clientes:f('clientes'), cortes:f('cortes'), mensajes:f('mensajes'), pagos:f('pagos'), ajustes:f('ajustes'),
+               sellos: Object.fromEntries(db.clientes.filter(visible).map(c=>[c.id, saldoDe(c.id)])) };
     },
     async crear(tabla, fila){
       exigirOperar(fila.sucursal_id);
@@ -120,12 +134,16 @@ function demoApi(){
       if (tabla==='clientes' && db.clientes.some(c=>c.sucursal_id===n.sucursal_id && c.telefono===n.telefono)) throw new Error('duplicate key telefono');
       if (tabla==='pagos' && db.pagos.some(p=>p.peluquero_id===n.peluquero_id && p.desde===n.desde && p.hasta===n.hasta)) throw new Error('pagos_peluquero_id_desde_hasta_key');
       if (tabla==='cortes') comision(n);
-      db[tabla].push(n); if (LOGEAR[tabla]?.includes('insert')) log(tabla,'insert',null,n); guardar(); return copia(n);
+      db[tabla].push(n);
+      if (LOGEAR[tabla]?.includes('insert') || (tabla==='cortes' && n.gratis) || (tabla==='clientes' && n.sellos_iniciales>0)) log(tabla,'insert',null,n);
+      guardar(); return copia(n);
     },
     async editar(tabla, id, cambios, llave='id'){
       const r = db[tabla].find(x=>x[llave]===id); if (!r || !visible(r)) throw new Error('No encontrado'); exigirOperar(r.sucursal_id);
       const antes = copia(r); Object.assign(r, cambios, { sucursal_id: antes.sucursal_id });
-      if (LOGEAR[tabla]?.includes('update')) log(tabla,'update',antes,copia(r)); guardar(); return copia(r);
+      if (tabla==='cortes') Object.assign(r, { gratis:antes.gratis, sello:antes.sello, sellos_usados:antes.sellos_usados, ...(antes.gratis?{precio:0}:{}) });
+      if (LOGEAR[tabla]?.includes('update') || (tabla==='clientes' && (antes.sellos_iniciales||0)!==(r.sellos_iniciales||0))) log(tabla,'update',antes,copia(r));
+      guardar(); return copia(r);
     },
     async borrar(tabla, id){
       const r = db[tabla].find(x=>x.id===id); if (!r || !visible(r)) return; exigirOperar(r.sucursal_id);
@@ -146,16 +164,22 @@ function demoApi(){
     const peluqueros = [P('p1','Luis Ramírez','centro','porcentaje',50), P('p2','Jorge Medina','centro','porcentaje',45), P('p3','Iván Torres','centro','fijo',90), P('p4','Mariana Ortiz','centro','porcentaje',40),
                         P('p5','Ricardo Salas','norte','porcentaje',50), P('p6','Kevin Aguilar','norte','fijo',100), P('p7','Emiliano Cruz','norte','porcentaje',45)];
     const base = [['Corte clásico',180],['Degradado / Fade',200],['Corte + barba',280],['Barba',120],['Corte niño',150],['Diseño / líneas',230]];
-    const servicios = sucursales.flatMap(s=>base.map(([n,p],i)=>({id:`${s.id}-s${i+1}`, sucursal_id:s.id, nombre:n, precio:p, activo:true, orden:i+1})));
-    const config = sucursales.map(s=>({sucursal_id:s.id, negocio:'Barbería El Filo', dias_recordatorio:21,
+    const servicios = sucursales.flatMap(s=>base.map(([n,p],i)=>({id:`${s.id}-s${i+1}`, sucursal_id:s.id, nombre:n, precio:p, activo:true, orden:i+1, da_sello:n!=='Barba'})));
+    const config = sucursales.map(s=>({sucursal_id:s.id, negocio:'Barbería El Filo', dias_recordatorio:21, sellos_para_gratis:5, pago_corte_gratis:50,
+      plantilla_gratis:'¡Felicidades {nombre}! 🎁 Completaste tu tarjeta en {negocio} {sucursal}: tu próximo corte es GRATIS. ¡Te esperamos!',
       plantilla_cumple:'¡Feliz cumpleaños, {nombre}! 🎉✂️\nTodo el equipo de {negocio} {sucursal} te desea un gran día. Esta semana tu corte tiene 20% de descuento, ¡te esperamos!',
       plantilla_recordatorio:'¡Hola {nombre}! 💈 Ya van {dias} días desde tu último corte con {peluquero}. ¿Te apartamos lugar esta semana en {negocio} {sucursal}? Responde este mensaje y te agendamos.'}));
     const nombres = ['Alejandro','Daniel','Carlos','José','Fernando','Miguel','Diego','Eduardo','Arturo','Roberto','Sergio','Héctor','Andrés','Pablo','Óscar','Raúl','Tomás','Mauricio','Rodrigo','Adrián','Gael','Santiago','Mateo','Leonardo','Sebastián','Emilio','Joaquín','Francisco','Javier','Ángel','Brenda','Sofía'];
     const apellidos = ['García','Hernández','López','Martínez','González','Pérez','Rodríguez','Sánchez','Ramírez','Flores','Gómez','Díaz','Reyes','Morales','Cruz','Ortiz','Gutiérrez','Chávez','Ramos','Vargas','Castillo','Jiménez','Mendoza','Ruiz','Aguilar','Herrera','Medina','Castro','Rojas','Navarro'];
     const descs = ['Fade bajo #0 a los lados, tijera arriba 4 cm, peinado hacia atrás','Fade medio #1, raya izquierda','Casquete #2 parejo, nuca cuadrada','Taper en nuca y patillas, texturizado arriba','Fade medio #0.5, barba perfilada, contorno navaja','Clásico de tijera, nuca redonda','Crop francés, fleco texturizado, fade alto','Buzz cut #3 parejo, contorno navaja','Pompadour: lados #1, arriba 7 cm sin rebajar volumen','Undercut #0, arriba largo peinado de lado'];
     const clientes = [], cortes = [];
-    const corte = (cli, p, s, fecha, hora, desc, met, prop) => { const n = {id:uid(), sucursal_id:p.sucursal_id, cliente_id:cli, peluquero_id:p.id, servicio_id:s.id, servicio:s.nombre, descripcion:desc, precio:s.precio, propina:prop, metodo:met, fecha, hora,
-      comision: p.esquema==='fijo'?p.valor:Math.round(s.precio*p.valor/100), esquema: p.esquema==='fijo'?`$${p.valor} fijo`:`${p.valor}%`, creado:new Date().toISOString()}; cortes.push(n); };
+    const saldo = {}; // sellos por cliente, para simular la tarjeta de lealtad
+    const corte = (cli, p, s, fecha, hora, desc, met, prop) => {
+      const gratis = (saldo[cli]||0) >= 5;
+      const n = {id:uid(), sucursal_id:p.sucursal_id, cliente_id:cli, peluquero_id:p.id, servicio_id:s.id, servicio:s.nombre, descripcion:desc, precio:gratis?0:s.precio, propina:prop, metodo:met, fecha, hora,
+        comision: gratis?50 : p.esquema==='fijo'?p.valor:Math.round(s.precio*p.valor/100), esquema: gratis?'Corte gratis' : p.esquema==='fijo'?`$${p.valor} fijo`:`${p.valor}%`,
+        gratis, sello: !gratis && s.da_sello, sellos_usados: gratis?5:0, creado:new Date().toISOString()};
+      saldo[cli] = (saldo[cli]||0) + (n.sello?1:0) - n.sellos_usados; cortes.push(n); };
     for (let i=0;i<190;i++){
       const suc = i<105 ? 'centro' : 'norte';
       let nac;
@@ -166,7 +190,9 @@ function demoApi(){
       const favP = pick(pel), favD = pick(descs), favS = r()<.55 ? sv[1] : pick(sv);
       let d = addDays(T, -Math.floor(r()*150));
       clientes.push({id, sucursal_id:suc, nombre:`${pick(nombres)} ${pick(apellidos)} ${pick(apellidos)}`, nacimiento:dkey(nac), telefono:(suc==='centro'?'55':'81')+String(Math.floor(10000000+r()*89999999)),
-        notas: r()<.15 ? pick(['Piel sensible en la nuca','Siempre pide lavado','Remolino en la coronilla']) : '', creado:d.toISOString()});
+        notas: r()<.15 ? pick(['Piel sensible en la nuca','Siempre pide lavado','Remolino en la coronilla']) : '', creado:d.toISOString(), sellos_iniciales: 0});
+      if (r()<.12){ clientes[clientes.length-1].sellos_iniciales = 1+Math.floor(r()*3); }
+      saldo[id] = clientes[clientes.length-1].sellos_iniciales;
       while (d <= T){
         corte(id, r()<.75?favP:pick(pel), r()<.75?favS:pick(sv), dkey(d), `${pad(10+Math.floor(r()*9))}:${pick(['00','15','30','45'])}`, r()<.72?favD:pick(descs), r()<.55?'efectivo':r()<.7?'tarjeta':'transferencia', r()<.28?pick([20,30,50]):0);
         d = addDays(d, 14+Math.floor(r()*24)); if (r()<.06) break;
